@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Photo Shrinker – batch JPG compression</title>
+<script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+:root{--bg:#101218;--panel:#181b24;--line:#2a2f3d;--text:#e9ebf1;--muted:#8d95a9;--accent:#86a8ff;--ok:#5fd4b0;--warn:#f0b866;--r:14px}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+main{max-width:860px;margin:0 auto;padding:20px 16px 64px}
+h1{font-size:1.6rem;margin:8px 0 2px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 20px}
+.drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:170px;padding:24px;text-align:center;border:2px dashed var(--line);border-radius:var(--r);background:var(--panel);cursor:pointer;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over,.drop:focus-visible{border-color:var(--accent);background:#1b2030;outline:none}
+.drop b{font-size:1.15rem}.drop span{color:var(--muted);font-size:.92rem}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
+button,select{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-height:44px}
+button{cursor:pointer}button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);color:#0b1020;border-color:var(--accent);font-weight:650}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.opts{display:grid;grid-template-columns:1fr;gap:10px;margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel)}
+@media(min-width:620px){.opts{grid-template-columns:1fr 1fr;align-items:center}}
+label{display:flex;align-items:center;gap:10px;min-height:44px}
+label.sel{justify-content:space-between}
+input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent)}
+.hint{grid-column:1/-1;color:var(--muted);font-size:.85rem;margin:0}
+.status{margin-top:20px;display:none}.status.on{display:block}
+.bar{height:10px;background:var(--line);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.stats{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:8px;color:var(--muted);font-size:.92rem}
+.stats strong{color:var(--ok);font-size:1.05rem}
+h2{font-size:1.1rem;margin:28px 0 10px}
+.cmp{display:none}.cmp.on{display:block}
+.stage{position:relative;height:min(62vh,520px);background:#000;border-radius:var(--r);overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab}
+.pane{position:absolute;inset:0;overflow:hidden}
+.pane img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform-origin:50% 50%;pointer-events:none;-webkit-user-drag:none}
+.tag{position:absolute;top:10px;padding:3px 10px;border-radius:99px;background:rgba(10,12,18,.75);font-size:.8rem;z-index:2}
+.handle{position:absolute;top:0;bottom:0;width:44px;margin-left:-22px;z-index:3;cursor:ew-resize;display:flex;align-items:center;justify-content:center}
+.handle::before{content:"";position:absolute;top:0;bottom:0;left:21px;width:2px;background:#fff;box-shadow:0 0 6px #0008}
+.handle span{position:relative;width:34px;height:34px;border-radius:50%;background:#fff;color:#101218;display:grid;place-items:center;font-weight:700;font-size:.8rem;box-shadow:0 2px 8px #0008}
+.zoom{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
+.zoom button{padding:6px 14px;min-height:40px}.zoom button.act{border-color:var(--accent);color:var(--accent)}
+.zoom small{color:var(--muted)}
+ul{list-style:none;margin:0;padding:0}
+li.f{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:11px 0;border-bottom:1px solid var(--line)}
+li.f .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+li.f .r{font-variant-numeric:tabular-nums;font-size:.9rem;color:var(--muted);text-align:right}
+li.f .r.good{color:var(--ok)}li.f .r.bad{color:var(--warn)}
+li.f a{color:var(--accent);font-size:.85rem;grid-column:1/-1}
+.err{color:var(--warn);font-size:.9rem;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo Shrinker</h1>
+  <p class="sub">Batch-compress JPGs at visually lossless quality. Your originals are never touched, and nothing leaves your device.</p>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose images">
+    <b>Drop photos or folders here, or tap to choose</b>
+    <span>JPG, PNG, WebP or HEIC · HEIC files are copied as they are</span>
+  </div>
+  <input type="file" id="fileIn" accept="image/*,.heic,.heif" multiple hidden>
+  <input type="file" id="dirIn" webkitdirectory multiple hidden>
+  <div class="row">
+    <button id="pickFiles">Choose photos</button>
+    <button id="pickDir">Choose folder</button>
+  </div>
+
+  <div class="opts">
+    <label class="sel">Max size (longest edge)
+      <select id="dim">
+        <option value="2560" selected>2560 px (recommended)</option>
+        <option value="0">Original size</option>
+        <option value="3840">3840 px (4K)</option>
+        <option value="1920">1920 px</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="exif" checked> Keep EXIF (date, camera, GPS)</label>
+    <p class="hint">Quality is fixed at 0.82. Unticking EXIF strips metadata and saves a little more space. Photos are never enlarged. If folder selection doesn’t work on your phone, tap “Choose photos” and pick “Files” or “Documents” in the picker so you can select many at once.</p>
+  </div>
+
+  <div class="row">
+    <button class="primary" id="go" disabled>Compress</button>
+    <button id="zip" disabled>Download all as ZIP</button>
+    <button id="clear" disabled>Clear</button>
+  </div>
+  <div class="err" id="err"></div>
+
+  <section class="status" id="status">
+    <div class="bar"><i id="barFill"></i></div>
+    <div class="stats"><span id="count">0 / 0 done</span><span>Total saved: <strong id="saved">0 KB</strong></span></div>
+  </section>
+
+  <section class="cmp" id="cmp">
+    <h2>Compare the first photo</h2>
+    <div class="stage" id="stage">
+      <div class="pane"><img id="imgA" alt="Original"></div>
+      <div class="pane" id="paneB"><img id="imgB" alt="Compressed"></div>
+      <span class="tag" style="left:10px">Before</span><span class="tag" style="right:10px">After</span>
+      <div class="handle" id="handle" role="slider" aria-label="Comparison position" aria-valuemin="0" aria-valuemax="100" tabindex="0"><span>&#8596;</span></div>
+    </div>
+    <div class="zoom" id="zoom">
+      <button data-z="1" class="act">Fit</button><button data-z="2">2×</button><button data-z="4">4×</button><button data-z="8">8×</button>
+      <small>Drag the handle to compare. Drag the image to pan, scroll or pinch to zoom.</small>
+    </div>
+  </section>
+
+  <h2 id="listH" style="display:none">Results</h2>
+  <ul id="list"></ul>
+</main>
+
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const state={items:[],running:false,savedBytes:0};
+const fmt=b=>b>=1048576?(b/1048576).toFixed(b>=10485760?1:2)+" MB":Math.max(1,Math.round(b/1024))+" KB";
+const isMobile=!matchMedia("(pointer:fine)").matches;
+if(typeof imageCompression==="undefined")$("err").textContent="Compression library couldn’t load (offline?). Using the built-in canvas compressor instead.";
+
+/* ---------- file intake ---------- */
+const isHeic=f=>/\.(heic|heif)$/i.test(f.name)||/^image\/hei[cf]/i.test(f.type);
+const isImg=f=>isHeic(f)||/^image\/(jpeg|png|webp)$/i.test(f.type)||/\.(jpe?g|png|webp)$/i.test(f.name);
+function addFiles(files){
+  const list=[...files].filter(isImg);
+  if(!list.length){$("err").textContent="No supported images found. Choose JPG, PNG, WebP or HEIC files.";return}
+  if(typeof imageCompression!=="undefined")$("err").textContent="";
+  for(const f of list){
+    state.items.push({file:f,path:f.webkitRelativePath||f._path||f.name,out:null,status:"queued"});
+  }
+  render();
+  $("go").disabled=false;$("clear").disabled=false;
+}
+$("pickFiles").onclick=()=>$("fileIn").click();
+async function walkDir(dir,base,out){
+  for await(const [,h] of dir.entries()){
+    if(h.kind==="file"){const f=await h.getFile();f._path=base+h.name;out.push(f)}
+    else await walkDir(h,base+h.name+"/",out);
+  }
+}
+$("pickDir").onclick=async()=>{
+  if(window.showDirectoryPicker){ // Chrome/Edge on desktop and recent Android Chrome
+    try{
+      const h=await showDirectoryPicker({mode:"read"});
+      const out=[];await walkDir(h,h.name+"/",out);addFiles(out);return;
+    }catch(e){
+      if(e&&e.name==="AbortError")return;
+      console.warn("Directory picker failed, trying fallback:",e);
+    }
+  }
+  $("dirIn").click(); // fallback: <input webkitdirectory>
+};
+$("drop").onclick=()=>$("fileIn").click();
+$("drop").onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("fileIn").click()}};
+$("fileIn").onchange=e=>{addFiles(e.target.files);e.target.value=""};
+$("dirIn").onchange=e=>{addFiles(e.target.files);e.target.value=""};
+["dragenter","dragover"].forEach(t=>$("drop").addEventListener(t,e=>{e.preventDefault();$("drop").classList.add("over")}));
+["dragleave","drop"].forEach(t=>$("drop").addEventListener(t,e=>{e.preventDefault();$("drop").classList.remove("over")}));
+$("drop").addEventListener("drop",async e=>{
+  const items=[...(e.dataTransfer.items||[])];
+  const entries=items.map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);
+  if(!entries.length){addFiles(e.dataTransfer.files);return}
+  const out=[];
+  const walk=async(en,base)=>{
+    if(en.isFile){const f=await new Promise(r=>en.file(r,()=>r(null)));if(f){f._path=base+f.name;out.push(f)}}
+    else if(en.isDirectory){
+      const rd=en.createReader();let batch;
+      do{batch=await new Promise(r=>rd.readEntries(r,()=>r([])));for(const c of batch)await walk(c,base+en.name+"/")}while(batch.length);
+    }
+  };
+  for(const en of entries)await walk(en,"");
+  addFiles(out);
+});
+
+/* ---------- compression ---------- */
+const readExifSeg=async file=>{ // grab APP1 Exif segment from a JPEG
+  try{
+    const b=new Uint8Array(await file.slice(0,262144).arrayBuffer());
+    if(b[0]!==0xFF||b[1]!==0xD8)return null;
+    let p=2;
+    while(p+4<b.length&&b[p]===0xFF){
+      const m=b[p+1],len=(b[p+2]<<8)|b[p+3];
+      if(m===0xE1&&b[p+4]===0x45&&b[p+5]===0x78)return b.slice(p,p+2+len);
+      if(m===0xDA)break;
+      p+=2+len;
+    }
+  }catch(e){}
+  return null;
+};
+async function canvasCompress(file,maxDim,keepExif){
+  const bmp=await createImageBitmap(file,{imageOrientation:keepExif?"none":"from-image"});
+  let w=bmp.width,h=bmp.height;
+  if(maxDim&&Math.max(w,h)>maxDim){const s=maxDim/Math.max(w,h);w=Math.round(w*s);h=Math.round(h*s)}
+  const c=document.createElement("canvas");c.width=w;c.height=h;
+  const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,w,h);
+  x.imageSmoothingQuality="high";x.drawImage(bmp,0,0,w,h);bmp.close&&bmp.close();
+  let blob=await new Promise(r=>c.toBlob(r,"image/jpeg",0.82));
+  if(keepExif){
+    const seg=await readExifSeg(file);
+    if(seg)blob=new Blob([new Uint8Array([0xFF,0xD8]),seg,blob.slice(2)],{type:"image/jpeg"});
+  }
+  return blob;
+}
+async function compressOne(file,maxDim,keepExif){
+  if(typeof imageCompression!=="undefined"){
+    try{
+      const o={initialQuality:0.82,useWebWorker:true,fileType:"image/jpeg",preserveExif:keepExif,maxSizeMB:Infinity};
+      if(maxDim)o.maxWidthOrHeight=maxDim;
+      return await imageCompression(file,o);
+    }catch(e){console.warn("Library failed, using canvas fallback:",e)}
+  }
+  return canvasCompress(file,maxDim,keepExif);
+}
+async function run(){
+  if(state.running)return;
+  state.running=true;
+  const maxDim=+$("dim").value,keep=$("exif").checked;
+  const todo=state.items.filter(i=>i.status==="queued");
+  $("go").disabled=true;$("zip").disabled=true;$("status").classList.add("on");
+  let done=state.items.filter(i=>i.status==="done"||i.status==="error").length;
+  const total=state.items.length;
+  const upd=()=>{
+    $("barFill").style.width=(total?done/total*100:0)+"%";
+    $("count").textContent=done+" / "+total+" done";
+    $("saved").textContent=fmt(Math.max(0,state.savedBytes));
+  };
+  upd();
+  const conc=isMobile?2:Math.min(4,Math.max(2,(navigator.hardwareConcurrency||4)-1));
+  let idx=0;
+  const worker=async()=>{
+    while(idx<todo.length){
+      const it=todo[idx++];it.status="working";render();
+      try{
+        let out;if(isHeic(it.file)){out=it.file;it.copied=true}else out=await compressOne(it.file,maxDim,keep); // HEIC is passed through untouched
+        if(out.size>=it.file.size&&/jpe?g/i.test(it.file.type)){out=it.file;it.kept=true} // never make a JPG bigger
+        it.out=out;it.status="done";
+        state.savedBytes+=it.file.size-out.size;
+        if(!state.first&&!it.copied){state.first=it;showCompare(it)}
+      }catch(e){it.status="error";it.msg=e&&e.message||"Failed"}
+      done++;upd();render();
+    }
+  };
+  await Promise.all(Array.from({length:Math.min(conc,todo.length)},worker));
+  state.running=false;
+  $("zip").disabled=!state.items.some(i=>i.out);
+  $("go").disabled=!state.items.some(i=>i.status==="queued");
+}
+$("go").onclick=run;
+
+/* ---------- results list ---------- */
+function outName(it){
+  if(it.copied)return it.path; // HEIC keeps its original name and folder
+  const p=it.path.replace(/\.[^./]+$/,"");
+  return p+"-compressed.jpg";
+}
+function render(){
+  $("listH").style.display=state.items.length?"block":"none";
+  const ul=$("list");ul.textContent="";
+  state.items.forEach(it=>{
+    const li=document.createElement("li");li.className="f";
+    const n=document.createElement("div");n.className="n";n.textContent=it.path;n.title=it.path;
+    const r=document.createElement("div");r.className="r";
+    if(it.status==="done"){
+      const pct=Math.round((1-it.out.size/it.file.size)*100);
+      if(it.copied)r.textContent="HEIC · "+fmt(it.file.size)+" · copied unchanged";
+      else{
+        r.textContent=fmt(it.file.size)+" → "+fmt(it.out.size)+" (-"+Math.max(0,pct)+"%)"+(it.kept?" kept original":"");
+        r.classList.add(pct>0?"good":"bad");
+      }
+      const a=document.createElement("a");
+      if(!it._url)it._url=URL.createObjectURL(it.out);
+      a.href=it._url;a.download=outName(it).split("/").pop();a.textContent="Download this photo";
+      li.append(n,r,a);
+    }else{
+      r.textContent=it.status==="error"?"Failed: "+it.msg:it.status==="working"?"Compressing…":fmt(it.file.size)+" · waiting";
+      if(it.status==="error")r.classList.add("bad");
+      li.append(n,r);
+    }
+    ul.append(li);
+  });
+}
+$("clear").onclick=()=>{
+  if(state.running)return;
+  state.items.forEach(i=>i._url&&URL.revokeObjectURL(i._url));
+  state.items=[];state.savedBytes=0;state.first=null;
+  ["imgA","imgB"].forEach(id=>{const im=$(id);im.removeAttribute("src")});
+  if(cmpUrls.a)URL.revokeObjectURL(cmpUrls.a);if(cmpUrls.b)URL.revokeObjectURL(cmpUrls.b);cmpUrls={};
+  $("cmp").classList.remove("on");$("status").classList.remove("on");
+  $("go").disabled=true;$("zip").disabled=true;$("clear").disabled=true;render();
+};
+
+/* ---------- ZIP ---------- */
+$("zip").onclick=async()=>{
+  const ready=state.items.filter(i=>i.out);
+  if(!ready.length)return;
+  if(typeof JSZip==="undefined"){$("err").textContent="ZIP library couldn’t load. Use the per-photo download links instead.";return}
+  $("zip").disabled=true;$("zip").textContent="Building ZIP…";
+  try{
+    const z=new JSZip(),used=new Set();
+    for(const it of ready){
+      let name=outName(it),k=1;
+      while(used.has(name.toLowerCase()))name=outName(it).replace(/(\.[^./]+)$/,"-"+(++k)+"$1");
+      used.add(name.toLowerCase());
+      z.file(name,it.out);
+    }
+    const blob=await z.generateAsync({type:"blob",compression:"STORE"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download="compressed-photos.zip";document.body.append(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+  }catch(e){$("err").textContent="ZIP failed: "+(e.message||e)}
+  $("zip").textContent="Download all as ZIP";$("zip").disabled=false;
+};
+
+/* ---------- before/after comparison ---------- */
+let cmpUrls={};
+const v={z:1,x:0,y:0,split:50};
+function showCompare(it){
+  cmpUrls={a:URL.createObjectURL(it.file),b:URL.createObjectURL(it.out)};
+  $("imgA").src=cmpUrls.a;$("imgB").src=cmpUrls.b;
+  Object.assign(v,{z:1,x:0,y:0,split:50});applyView();
+  $("cmp").classList.add("on");
+}
+function applyView(){
+  const t="translate("+v.x+"px,"+v.y+"px) scale("+v.z+")";
+  $("imgA").style.transform=t;$("imgB").style.transform=t;
+  $("paneB").style.clipPath="inset(0 0 0 "+v.split+"%)";
+  $("handle").style.left=v.split+"%";
+  $("handle").setAttribute("aria-valuenow",Math.round(v.split));
+  document.querySelectorAll("#zoom button").forEach(b=>b.classList.toggle("act",+b.dataset.z===v.z));
+}
+function setZoom(z){
+  v.z=Math.min(12,Math.max(1,z));
+  if(v.z===1){v.x=0;v.y=0}
+  applyView();
+}
+document.querySelectorAll("#zoom button").forEach(b=>b.onclick=()=>setZoom(+b.dataset.z));
+const stage=$("stage"),pts=new Map();let mode=null,last=null,pinch=0;
+stage.addEventListener("pointerdown",e=>{
+  stage.setPointerCapture(e.pointerId);pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pts.size===1){mode=$("handle").contains(e.target)?"split":"pan";last={x:e.clientX,y:e.clientY}}
+  else if(pts.size===2){mode="pinch";const [a,b]=[...pts.values()];pinch=Math.hypot(a.x-b.x,a.y-b.y)}
+  if(mode==="split")moveSplit(e);
+});
+stage.addEventListener("pointermove",e=>{
+  if(!pts.has(e.pointerId))return;
+  pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(mode==="split")moveSplit(e);
+  else if(mode==="pan"&&v.z>1){v.x+=e.clientX-last.x;v.y+=e.clientY-last.y;last={x:e.clientX,y:e.clientY};applyView()}
+  else if(mode==="pinch"&&pts.size>=2){const [a,b]=[...pts.values()];const d=Math.hypot(a.x-b.x,a.y-b.y);if(pinch)setZoom(v.z*d/pinch);pinch=d}
+});
+const endPtr=e=>{pts.delete(e.pointerId);if(pts.size===0)mode=null;else if(pts.size===1){mode="pan";const p=[...pts.values()][0];last={x:p.x,y:p.y}}};
+stage.addEventListener("pointerup",endPtr);stage.addEventListener("pointercancel",endPtr);
+function moveSplit(e){
+  const r=stage.getBoundingClientRect();
+  v.split=Math.min(100,Math.max(0,(e.clientX-r.left)/r.width*100));applyView();
+}
+stage.addEventListener("wheel",e=>{e.preventDefault();setZoom(v.z*(e.deltaY<0?1.2:1/1.2))},{passive:false});
+$("handle").addEventListener("keydown",e=>{
+  if(e.key==="ArrowLeft"){v.split=Math.max(0,v.split-3);applyView()}
+  if(e.key==="ArrowRight"){v.split=Math.min(100,v.split+3);applyView()}
+});
+window.addEventListener("beforeunload",e=>{if(state.running){e.preventDefault();e.returnValue=""}});
+})();
+</script>
+</body>
+</html>
